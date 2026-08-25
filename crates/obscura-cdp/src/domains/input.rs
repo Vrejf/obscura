@@ -199,11 +199,7 @@ pub async fn handle(
                                 }} else if (labelHost.querySelector) {{\
                                     ctl = labelHost.querySelector('button,input:not([type=hidden]),meter,output,progress,select,textarea');\
                                 }}\
-                                if (ctl && ctl !== clickTarget && !ctl.disabled && !ctl.hasAttribute('disabled') && typeof ctl.click === 'function' && !labelHost.__obscuraLabelForwarding) {{\
-                                    labelHost.__obscuraLabelForwarding = true;\
-                                    try {{ ctl.click(); }} finally {{ labelHost.__obscuraLabelForwarding = false; }}\
-                                    return;\
-                                }}\
+                                if (ctl && ctl !== clickTarget && globalThis.__obscura_activateLabel(labelHost, ctl)) {{ return; }}\
                             }}\
                             var link = clickTarget.closest ? clickTarget.closest('a[href]') : null;\
                             if (!link && tag === 'A' && clickTarget.getAttribute('href')) link = clickTarget;\

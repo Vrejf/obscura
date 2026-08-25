@@ -19,7 +19,7 @@
     '__obscura_frameId', '__obscura_parentFrameId', '__obscura_frameWindows',
     '__obscura_frameObjects', '__obscura_frameElements', '__obscura_deliverMessage',
     '__obscura_liveFrameIds', '__obscura_forgetFrame',
-    '__obscura_registerLinkedStylesheet',
+    '__obscura_registerLinkedStylesheet', '__obscura_activateLabel',
     '__markParserScripts', '__obscura_hasPendingDynamicScripts',
     '__obscura_hasPendingLoadDelayingScripts',
     '__obscura_nextPendingTimeoutDelay',
@@ -2596,6 +2596,23 @@ function _labeledControl(label) {
   return label.querySelector ? label.querySelector(_LABELABLE) : null;
 }
 
+// Run a label's activation behaviour once, and report whether it ran. The set
+// of labels currently forwarding is closure-private, so a control that clicks
+// its own label from a click handler cannot recurse and page script can neither
+// read nor forge the state. Marking the label itself would leave an enumerable
+// property on a DOM node. The CDP click path shares this guard through the
+// non-enumerable __obscura_activateLabel helper, so both click paths apply the
+// same rule.
+const _forwardingLabels = new WeakSet();
+globalThis.__obscura_activateLabel = function(label, control) {
+  if (!label || !control || _forwardingLabels.has(label)) return false;
+  if (control.disabled || (control.hasAttribute && control.hasAttribute('disabled'))) return false;
+  if (typeof control.click !== 'function') return false;
+  _forwardingLabels.add(label);
+  try { control.click(); } finally { _forwardingLabels.delete(label); }
+  return true;
+};
+
 function _isSubmitButton(el) {
   if (!el || typeof el.localName !== "string") return false;
   const type = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
@@ -3501,12 +3518,9 @@ class Element extends Node {
     // control nested inside its own label from bouncing the click back.
     const _selfInteractive = this.matches && this.matches(_LABELABLE + ',a');
     const _label = _selfInteractive ? null : (_tag === 'LABEL' ? this : (this.closest ? this.closest('label') : null));
-    if (_label && !_label.__obscuraLabelForwarding) {
+    if (_label) {
       const control = _labeledControl(_label);
-      // A disabled control has no activation behaviour.
-      if (control && control !== this && !control.disabled && !(control.hasAttribute && control.hasAttribute('disabled'))) {
-        _label.__obscuraLabelForwarding = true;
-        try { control.click(); } finally { _label.__obscuraLabelForwarding = false; }
+      if (control && control !== this && globalThis.__obscura_activateLabel(_label, control)) {
         return;
       }
     }
