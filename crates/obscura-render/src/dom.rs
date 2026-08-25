@@ -7170,7 +7170,7 @@ fn synthesize_flattened_inline_rects(
             }
         }
     }
-    let missing: Vec<NodeId> = styles
+    let mut missing: Vec<NodeId> = styles
         .iter()
         .filter(|(id, style)| {
             // A positioned inline is a containing block for absolute
@@ -7182,6 +7182,10 @@ fn synthesize_flattened_inline_rects(
         })
         .map(|(&id, _)| id)
         .collect();
+    // Later entries can consult rects synthesized by earlier ones when
+    // wrappers nest, so process in a fixed order to keep the fragment maps
+    // identical across runs (the incremental layout tests compare them).
+    missing.sort_unstable_by_key(|id| id.raw());
     for id in missing {
         let mut pieces = Vec::new();
         gather(tree, id, rects, text_runs, &mut pieces);

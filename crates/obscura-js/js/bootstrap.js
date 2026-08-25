@@ -2573,8 +2573,8 @@ function _htmlAttrName(el, n) {
   return n;
 }
 
-// A submit button per the HTML spec: a <button> whose type is submit — the
-// default, including when the type attribute is missing or invalid — or an
+// A submit button per the HTML spec: a <button> whose type is submit (the
+// default, including when the type attribute is missing or invalid) or an
 // <input> of type submit/image. Used to validate requestSubmit's submitter.
 // The HTML "labeled control" of a <label>: the element referenced by its `for`
 // attribute, or the first labelable descendant. Labelable elements per spec are
