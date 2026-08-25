@@ -2583,8 +2583,11 @@ function _htmlAttrName(el, n) {
 const _LABELABLE = 'button,input:not([type=hidden]),meter,output,progress,select,textarea';
 function _labeledControl(label) {
   if (!label || label.tagName !== 'LABEL') return null;
+  // A present `for` attribute means association by ID only; an empty value
+  // associates nothing (no fallback to a descendant).
   const forId = label.getAttribute ? label.getAttribute('for') : null;
-  if (forId !== null && forId !== undefined && forId !== '') {
+  if (forId !== null && forId !== undefined) {
+    if (forId === '') return null;
     const doc = label.ownerDocument || globalThis.document;
     const el = doc && doc.getElementById ? doc.getElementById(forId) : null;
     if (!el) return null;
@@ -3496,11 +3499,14 @@ class Element extends Node {
     // Label activation behaviour (HTML spec): activating a label runs a
     // synthetic click on its labeled control. The re-entrancy guard stops a
     // control nested inside its own label from bouncing the click back.
-    if (_tag === 'LABEL' && !this.__obscuraLabelForwarding) {
-      const control = _labeledControl(this);
-      if (control) {
-        this.__obscuraLabelForwarding = true;
-        try { control.click(); } finally { this.__obscuraLabelForwarding = false; }
+    const _selfInteractive = this.matches && this.matches(_LABELABLE + ',a');
+    const _label = _selfInteractive ? null : (_tag === 'LABEL' ? this : (this.closest ? this.closest('label') : null));
+    if (_label && !_label.__obscuraLabelForwarding) {
+      const control = _labeledControl(_label);
+      // A disabled control has no activation behaviour.
+      if (control && control !== this && !control.disabled && !(control.hasAttribute && control.hasAttribute('disabled'))) {
+        _label.__obscuraLabelForwarding = true;
+        try { control.click(); } finally { _label.__obscuraLabelForwarding = false; }
         return;
       }
     }

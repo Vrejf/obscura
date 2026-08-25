@@ -192,8 +192,18 @@ pub async fn handle(
                             var labelHost = tag === 'LABEL' ? clickTarget : (clickTarget.closest ? clickTarget.closest('label') : null);\
                             if (labelHost && tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA' && tag !== 'BUTTON' && tag !== 'A') {{\
                                 var lblFor = labelHost.getAttribute('for');\
-                                var ctl = lblFor ? document.getElementById(lblFor) : (labelHost.querySelector ? labelHost.querySelector('button,input:not([type=hidden]),meter,output,progress,select,textarea') : null);\
-                                if (ctl && ctl !== clickTarget && typeof ctl.click === 'function') {{ ctl.click(); return; }}\
+                                var ctl = null;\
+                                if (lblFor !== null && lblFor !== undefined) {{\
+                                    ctl = lblFor === '' ? null : document.getElementById(lblFor);\
+                                    if (ctl && !(ctl.matches && ctl.matches('button,input:not([type=hidden]),meter,output,progress,select,textarea'))) ctl = null;\
+                                }} else if (labelHost.querySelector) {{\
+                                    ctl = labelHost.querySelector('button,input:not([type=hidden]),meter,output,progress,select,textarea');\
+                                }}\
+                                if (ctl && ctl !== clickTarget && !ctl.disabled && !ctl.hasAttribute('disabled') && typeof ctl.click === 'function' && !labelHost.__obscuraLabelForwarding) {{\
+                                    labelHost.__obscuraLabelForwarding = true;\
+                                    try {{ ctl.click(); }} finally {{ labelHost.__obscuraLabelForwarding = false; }}\
+                                    return;\
+                                }}\
                             }}\
                             var link = clickTarget.closest ? clickTarget.closest('a[href]') : null;\
                             if (!link && tag === 'A' && clickTarget.getAttribute('href')) link = clickTarget;\
