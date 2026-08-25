@@ -13159,6 +13159,59 @@ mod tests {
     }
 
     #[test]
+    fn test_click_respects_disabled_controls_and_interactive_content() {
+        // A disabled control has no activation behaviour, whether it is clicked
+        // directly, reached through its label, or disabled by an ancestor
+        // fieldset. Interactive content inside a label swallows the label's
+        // activation, but an <a> without href is not interactive content.
+        let mut rt = setup_runtime(
+            r#"<input type="checkbox" id="direct" disabled>
+               <fieldset disabled><label id="in-set" for="set-box">s</label>
+                 <input type="checkbox" id="set-box"></fieldset>
+               <label id="link"><a href="/x"><span id="in-link">go</span></a>
+                 <input type="checkbox" id="link-box"></label>
+               <label id="plain"><a><span id="in-plain">go</span></a>
+                 <input type="checkbox" id="plain-box"></label>"#,
+        );
+        let result = rt
+            .evaluate(
+                r#"
+            const ids = ['direct', 'in-set', 'in-link', 'in-plain'];
+            for (const id of ids) { document.getElementById(id).click(); }
+            return ['direct', 'set-box', 'link-box', 'plain-box']
+                .map(id => document.getElementById(id).checked);
+        "#,
+            )
+            .unwrap();
+        assert_eq!(result, serde_json::json!([false, false, false, true]));
+    }
+
+    #[test]
+    fn test_checkbox_pre_click_activation_clears_indeterminate() {
+        let mut rt = setup_runtime(
+            r#"<label id="live" for="live-box">a</label><input type="checkbox" id="live-box">
+               <label id="cancel" for="cancel-box">b</label>
+               <input type="checkbox" id="cancel-box">"#,
+        );
+        let result = rt
+            .evaluate(
+                r#"
+            const live = document.getElementById('live-box');
+            const cancelled = document.getElementById('cancel-box');
+            live.indeterminate = true;
+            cancelled.indeterminate = true;
+            cancelled.addEventListener('click', event => event.preventDefault());
+            document.getElementById('live').click();
+            document.getElementById('cancel').click();
+            return [live.indeterminate, cancelled.indeterminate, cancelled.checked];
+        "#,
+            )
+            .unwrap();
+        // A cancelled activation restores indeterminate along with checked.
+        assert_eq!(result, serde_json::json!([false, true, false]));
+    }
+
+    #[test]
     fn test_label_click_runs_checkbox_pre_click_activation() {
         // The control flips before the click event dispatches, so listeners
         // observe the new state, `input` and `change` follow, and a cancelled

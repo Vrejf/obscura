@@ -190,7 +190,8 @@ pub async fn handle(
                                 return;\
                             }}\
                             var labelHost = tag === 'LABEL' ? clickTarget : (clickTarget.closest ? clickTarget.closest('label') : null);\
-                            if (labelHost && tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA' && tag !== 'BUTTON' && tag !== 'A') {{\
+                            var interactiveHost = clickTarget.closest ? clickTarget.closest('button,input:not([type=hidden]),meter,output,progress,select,textarea,a[href]') : null;\
+                            if (labelHost && !(interactiveHost && labelHost.contains(interactiveHost))) {{\
                                 var lblFor = labelHost.getAttribute('for');\
                                 var ctl = null;\
                                 if (lblFor !== null && lblFor !== undefined) {{\

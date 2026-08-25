@@ -7151,10 +7151,18 @@ fn synthesize_flattened_inline_rects(
     fn gather(
         tree: &DomTree,
         id: NodeId,
+        depth: u32,
         rects: &HashMap<NodeId, Rect>,
         text_runs: &HashMap<NodeId, Vec<(Rect, String)>>,
+        styles: &HashMap<NodeId, crate::LayoutStyle>,
         pieces: &mut Vec<Rect>,
     ) {
+        // Inline wrappers do not nest deeply in practice. The cap keeps a
+        // pathological tree from recursing without bound, matching the
+        // descendants() guard in tree.rs.
+        if depth >= 64 {
+            return;
+        }
         for child in rendered_children(tree, id) {
             let Some(node) = tree.get_node(child) else {
                 continue;
@@ -7163,12 +7171,54 @@ fn synthesize_flattened_inline_rects(
                 if let Some(runs) = text_runs.get(&child) {
                     pieces.extend(runs.iter().map(|(rect, _)| *rect));
                 }
-            } else if let Some(rect) = rects.get(&child) {
+                continue;
+            }
+            // An out-of-flow or floated descendant is not part of the inline
+            // box: including one drags the wrapper's rect out to wherever the
+            // descendant was placed.
+            if let Some(style) = styles.get(&child) {
+                if style.display == crate::Display::None
+                    || style.float.is_some()
+                    || matches!(style.position, Some(taffy::Position::Absolute))
+                {
+                    continue;
+                }
+            }
+            if let Some(rect) = rects.get(&child) {
                 pieces.push(*rect);
             } else {
-                gather(tree, child, rects, text_runs, pieces);
+                gather(tree, child, depth + 1, rects, text_runs, styles, pieces);
             }
         }
+    }
+
+    // One fragment per line, not per word: getClientRects() exposes these, and
+    // a multi-line inline has one rect per line box.
+    fn merge_into_line_fragments(mut pieces: Vec<Rect>) -> Vec<Rect> {
+        pieces.sort_by(|a, b| a.y.total_cmp(&b.y).then_with(|| a.x.total_cmp(&b.x)));
+        let mut lines: Vec<Rect> = Vec::new();
+        for piece in pieces {
+            match lines.last_mut() {
+                // Word boxes on one line share a baseline but can differ in
+                // height, so overlap is the test, not equality.
+                Some(line)
+                    if piece.y < line.y + line.height && piece.y + piece.height > line.y =>
+                {
+                    let left = line.x.min(piece.x);
+                    let top = line.y.min(piece.y);
+                    let right = (line.x + line.width).max(piece.x + piece.width);
+                    let bottom = (line.y + line.height).max(piece.y + piece.height);
+                    *line = Rect {
+                        x: left,
+                        y: top,
+                        width: (right - left).max(0.0),
+                        height: (bottom - top).max(0.0),
+                    };
+                }
+                _ => lines.push(piece),
+            }
+        }
+        lines
     }
     let mut missing: Vec<NodeId> = styles
         .iter()
@@ -7188,10 +7238,11 @@ fn synthesize_flattened_inline_rects(
     missing.sort_unstable_by_key(|id| id.raw());
     for id in missing {
         let mut pieces = Vec::new();
-        gather(tree, id, rects, text_runs, &mut pieces);
+        gather(tree, id, 0, rects, text_runs, styles, &mut pieces);
         if pieces.is_empty() {
             continue;
         }
+        let pieces = merge_into_line_fragments(pieces);
         let mut union = pieces[0];
         for rect in &pieces[1..] {
             let left = union.x.min(rect.x);
@@ -9655,6 +9706,7 @@ fn is_flattenable_inline(
         && style.background_image.is_none()
         && style.mask_image.is_none()
         && style.border == crate::Edges::default()
+        && style.padding == crate::Edges::default()
         && style.position.is_none()
         && !style.overflow_hidden
         && style.float.is_none()

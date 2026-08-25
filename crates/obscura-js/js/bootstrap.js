@@ -2604,14 +2604,32 @@ function _labeledControl(label) {
 // non-enumerable __obscura_activateLabel helper, so both click paths apply the
 // same rule.
 const _forwardingLabels = new WeakSet();
+
+// Disabled per the HTML spec: the control's own attribute, or a disabled
+// <fieldset> ancestor. The first <legend> of such a fieldset is exempt.
+function _isActuallyDisabled(el) {
+  if (!el) return false;
+  if (el.disabled || (el.hasAttribute && el.hasAttribute('disabled'))) return true;
+  if (!el.closest) return false;
+  const fieldset = el.closest('fieldset[disabled]');
+  if (!fieldset) return false;
+  const legend = fieldset.querySelector ? fieldset.querySelector('legend') : null;
+  return !(legend && legend.contains && legend.contains(el));
+}
+
 globalThis.__obscura_activateLabel = function(label, control) {
   if (!label || !control || _forwardingLabels.has(label)) return false;
-  if (control.disabled || (control.hasAttribute && control.hasAttribute('disabled'))) return false;
-  if (typeof control.click !== 'function') return false;
+  if (_isActuallyDisabled(control) || typeof control.click !== 'function') return false;
   _forwardingLabels.add(label);
   try { control.click(); } finally { _forwardingLabels.delete(label); }
   return true;
 };
+// Frozen so page script can neither replace the helper to suppress or fake
+// label activation, nor delete it and make later clicks throw.
+Object.defineProperty(globalThis, '__obscura_activateLabel', {
+  writable: false,
+  configurable: false,
+});
 
 function _isSubmitButton(el) {
   if (!el || typeof el.localName !== "string") return false;
@@ -3480,10 +3498,20 @@ class Element extends Node {
     // el.click() dispatched an event but never toggled the control.
     const _tag = this.tagName;
     const _type = ((this.getAttribute && this.getAttribute('type')) || '').toLowerCase();
-    const _checkable = _tag === 'INPUT' && (_type === 'checkbox' || _type === 'radio');
-    let _oldChecked = false, _radioStates = null;
+    const _checkable = _tag === 'INPUT' && (_type === 'checkbox' || _type === 'radio')
+      && !_isActuallyDisabled(this);
+    // A disabled form control has no activation behaviour and dispatches no
+    // click event at all.
+    if (_isActuallyDisabled(this) && _tag !== 'LABEL') {
+      return;
+    }
+    let _oldChecked = false, _oldIndeterminate = false, _radioStates = null;
     if (_checkable) {
       _oldChecked = !!this.checked;
+      // Pre-click activation always clears indeterminate, and a cancelled
+      // event restores it.
+      _oldIndeterminate = !!this.indeterminate;
+      this.indeterminate = false;
       if (_type === 'radio') {
         const _name = this.getAttribute('name') || '';
         if (_name) {
@@ -3506,6 +3534,7 @@ class Element extends Node {
     if (cancelled) {
       if (_radioStates) { for (let i = 0; i < _radioStates.length; i++) _radioStates[i][0].checked = _radioStates[i][1]; }
       else if (_checkable) this.checked = _oldChecked;
+      if (_checkable) this.indeterminate = _oldIndeterminate;
       return;
     }
     if (_checkable && this.checked !== _oldChecked) {
@@ -3516,9 +3545,15 @@ class Element extends Node {
     // Label activation behaviour (HTML spec): activating a label runs a
     // synthetic click on its labeled control. The re-entrancy guard stops a
     // control nested inside its own label from bouncing the click back.
-    const _selfInteractive = this.matches && this.matches(_LABELABLE + ',a');
-    const _label = _selfInteractive ? null : (_tag === 'LABEL' ? this : (this.closest ? this.closest('label') : null));
-    if (_label) {
+    // Interactive content inside a label has its own activation behaviour and
+    // swallows the label's, so only a click that lands on ordinary content
+    // forwards. An <a> without href is not interactive content.
+    const _INTERACTIVE = _LABELABLE + ',a[href]';
+    const _label = _tag === 'LABEL'
+      ? this
+      : (this.closest && !this.matches(_INTERACTIVE) ? this.closest('label') : null);
+    if (_label && !(this.closest && this.closest(_INTERACTIVE) &&
+        _label.contains(this.closest(_INTERACTIVE)))) {
       const control = _labeledControl(_label);
       if (control && control !== this && globalThis.__obscura_activateLabel(_label, control)) {
         return;

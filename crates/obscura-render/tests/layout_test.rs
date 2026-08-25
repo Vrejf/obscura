@@ -4517,3 +4517,42 @@ fn flattened_inline_wrappers_keep_dom_geometry_next_to_replaced_siblings() {
         "positioned inline keeps its own layout box: {positioned:?}"
     );
 }
+
+#[test]
+fn flattened_inline_geometry_excludes_out_of_flow_and_merges_lines() {
+    // The synthesized union must describe the inline box itself: an absolutely
+    // positioned descendant is not part of it, and a wrapped inline exposes one
+    // fragment per line rather than one per word.
+    let tree = parse_html(
+        r#"
+        <style>
+          html, body { margin:0; font:16px/18px monospace }
+        </style>
+        <div style="position:relative">
+          <span id="host">text <span style="position:absolute;left:900px">far</span></span>
+          <input type="checkbox">
+        </div>
+        <div style="width:80px"><span id="wrapped">aaa bbb ccc ddd</span><input type="checkbox"></div>
+        "#,
+    );
+    let layout = layout_dom(&tree, (400.0, 300.0));
+    let host = layout.rects[&tree.get_element_by_id("host").unwrap()];
+    assert!(
+        host.width < 200.0,
+        "an absolute descendant must not stretch the inline box: {host:?}"
+    );
+
+    let wrapped_id = tree.get_element_by_id("wrapped").unwrap();
+    let fragments = &layout.inline_fragments[&wrapped_id];
+    assert!(
+        fragments.len() > 1 && fragments.len() <= 4,
+        "wrapped inline exposes one fragment per line, got {}: {fragments:?}",
+        fragments.len()
+    );
+    for pair in fragments.windows(2) {
+        assert!(
+            pair[1].y >= pair[0].y + pair[0].height - 0.5,
+            "fragments must be one per line, not per word: {fragments:?}"
+        );
+    }
+}
