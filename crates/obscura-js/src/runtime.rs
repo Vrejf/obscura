@@ -13087,6 +13087,110 @@ mod tests {
     }
 
     #[test]
+    fn test_label_click_activates_its_labeled_control() {
+        let mut rt = setup_runtime(
+            r#"<label id="explicit" for="a">a</label><input type="checkbox" id="a">
+               <label id="implicit">b <input type="checkbox" id="b"></label>"#,
+        );
+        let result = rt
+            .evaluate(
+                r#"
+            const ids = ['explicit', 'implicit'];
+            for (const id of ids) { document.getElementById(id).click(); }
+            return [document.getElementById('a').checked, document.getElementById('b').checked];
+        "#,
+            )
+            .unwrap();
+        assert_eq!(result, serde_json::json!([true, true]));
+    }
+
+    #[test]
+    fn test_label_click_honors_the_association_rules() {
+        // A present `for` associates by id alone: an empty value associates
+        // nothing and must not fall back to the nested control, and a dangling
+        // id activates nothing. A disabled control has no activation behavior.
+        let mut rt = setup_runtime(
+            r#"<label id="empty" for="">a <input type="checkbox" id="a"></label>
+               <label id="dangling" for="missing">b</label><input type="checkbox" id="b">
+               <label id="disabled" for="c">c</label><input type="checkbox" id="c" disabled>
+               <label id="both" for="d">d <input type="checkbox" id="e"></label>
+               <input type="checkbox" id="d">"#,
+        );
+        let result = rt
+            .evaluate(
+                r#"
+            for (const id of ['empty', 'dangling', 'disabled', 'both']) {
+                document.getElementById(id).click();
+            }
+            return ['a', 'b', 'c', 'd', 'e'].map(id => document.getElementById(id).checked);
+        "#,
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!([false, false, false, true, false])
+        );
+    }
+
+    #[test]
+    fn test_label_activation_does_not_double_fire_or_recurse() {
+        // Clicking the control inside its own label toggles once, and a click
+        // handler that clicks that label back cannot re-enter the forwarding.
+        let mut rt = setup_runtime(
+            r#"<label id="wrapper"><input type="checkbox" id="nested"></label>
+               <label id="host" for="reentrant">r</label>
+               <input type="checkbox" id="reentrant">"#,
+        );
+        let result = rt
+            .evaluate(
+                r#"
+            const reentrant = document.getElementById('reentrant');
+            document.getElementById('nested').click();
+            let bounces = 0;
+            reentrant.addEventListener('click', () => {
+                if (bounces++ < 1) { document.getElementById('host').click(); }
+            });
+            document.getElementById('host').click();
+            return [document.getElementById('nested').checked, reentrant.checked, bounces];
+        "#,
+            )
+            .unwrap();
+        assert_eq!(result, serde_json::json!([true, true, 1]));
+    }
+
+    #[test]
+    fn test_label_click_runs_checkbox_pre_click_activation() {
+        // The control flips before the click event dispatches, so listeners
+        // observe the new state, `input` and `change` follow, and a cancelled
+        // event restores the old state.
+        let mut rt = setup_runtime(
+            r#"<label id="live" for="live-box">a</label><input type="checkbox" id="live-box">
+               <label id="cancel" for="cancel-box">b</label>
+               <input type="checkbox" id="cancel-box">"#,
+        );
+        let result = rt
+            .evaluate(
+                r#"
+            const events = [];
+            const live = document.getElementById('live-box');
+            for (const type of ['click', 'input', 'change']) {
+                live.addEventListener(type, () => events.push(type + ':' + live.checked));
+            }
+            document.getElementById('live').click();
+            const cancelled = document.getElementById('cancel-box');
+            cancelled.addEventListener('click', event => event.preventDefault());
+            document.getElementById('cancel').click();
+            return [events.join(','), live.checked, cancelled.checked];
+        "#,
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!(["click:true,input:true,change:true", true, false])
+        );
+    }
+
+    #[test]
     fn test_dispatch_mouse_event_runs_listener() {
         let mut rt = setup_runtime(r#"<button id="go">Go</button>"#);
         let result = rt

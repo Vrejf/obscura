@@ -4471,3 +4471,49 @@ fn grid_ordinary_aspect_ratio_preserves_normal_alignment_provenance() {
     assert_eq!(size("parent-align-stretch"), (400.0, 200.0));
     assert_eq!(size("parent-justify-stretch"), (300.0, 150.0));
 }
+
+#[test]
+fn flattened_inline_wrappers_keep_dom_geometry_next_to_replaced_siblings() {
+    // An inline run holding a replaced sibling takes the mixed-run path, where
+    // the wrapper is spliced into its parent's children and owns no box. It
+    // still needs a rect: automation clicks labels and spans by coordinate.
+    let tree = parse_html(
+        r#"
+        <style>
+          html, body { margin:0; font:16px/17px monospace }
+        </style>
+        <div><label id="with-input">toggle</label><input type="checkbox"></div>
+        <div><span id="with-image">caption</span><img src="x.png" width="10" height="10"></div>
+        <div><span id="plain">alone</span></div>
+        <div style="position:relative">
+          <span id="positioned" style="position:absolute">absolute</span>
+          <input type="checkbox">
+        </div>
+        "#,
+    );
+    let layout = layout_dom(&tree, (400.0, 200.0));
+    let rect = |id| layout.rects[&tree.get_element_by_id(id).unwrap()];
+
+    for id in ["with-input", "with-image"] {
+        let flattened = rect(id);
+        let plain = rect("plain");
+        assert!(
+            flattened.width > 0.0 && flattened.height > 0.0,
+            "{id} must report its content geometry, got {flattened:?}"
+        );
+        // Within a pixel of an ordinary inline: the synthesized union is
+        // derived from text-run boxes, the unflattened rect from the font box.
+        assert!(
+            (flattened.height - plain.height).abs() <= 1.0,
+            "{id} must be one line tall like an ordinary inline: {flattened:?} vs {plain:?}"
+        );
+    }
+
+    // A positioned inline is a containing block for absolute descendants, so
+    // its geometry stays with the paths that resolve those insets.
+    let positioned = rect("positioned");
+    assert!(
+        positioned.width > 0.0,
+        "positioned inline keeps its own layout box: {positioned:?}"
+    );
+}
