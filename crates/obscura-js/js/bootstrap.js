@@ -2576,6 +2576,23 @@ function _htmlAttrName(el, n) {
 // A submit button per the HTML spec: a <button> whose type is submit — the
 // default, including when the type attribute is missing or invalid — or an
 // <input> of type submit/image. Used to validate requestSubmit's submitter.
+// The HTML "labeled control" of a <label>: the element referenced by its `for`
+// attribute, or the first labelable descendant. Labelable elements per spec are
+// button, input (excluding type=hidden), meter, output, progress, select,
+// textarea.
+const _LABELABLE = 'button,input:not([type=hidden]),meter,output,progress,select,textarea';
+function _labeledControl(label) {
+  if (!label || label.tagName !== 'LABEL') return null;
+  const forId = label.getAttribute ? label.getAttribute('for') : null;
+  if (forId !== null && forId !== undefined && forId !== '') {
+    const doc = label.ownerDocument || globalThis.document;
+    const el = doc && doc.getElementById ? doc.getElementById(forId) : null;
+    if (!el) return null;
+    return el.matches && el.matches(_LABELABLE) ? el : null;
+  }
+  return label.querySelector ? label.querySelector(_LABELABLE) : null;
+}
+
 function _isSubmitButton(el) {
   if (!el || typeof el.localName !== "string") return false;
   const type = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
@@ -3436,7 +3453,57 @@ class Element extends Node {
     return cache[name];
   }
   click() {
+    // Pre-click activation steps (HTML spec): a checkbox/radio flips BEFORE the
+    // click event dispatches, so listeners observe the new state, and the change
+    // is reverted if the event is cancelled. This mirrors the CDP mouse path in
+    // obscura-cdp/src/domains/input.rs, which already implements it; without it
+    // el.click() dispatched an event but never toggled the control.
+    const _tag = this.tagName;
+    const _type = ((this.getAttribute && this.getAttribute('type')) || '').toLowerCase();
+    const _checkable = _tag === 'INPUT' && (_type === 'checkbox' || _type === 'radio');
+    let _oldChecked = false, _radioStates = null;
+    if (_checkable) {
+      _oldChecked = !!this.checked;
+      if (_type === 'radio') {
+        const _name = this.getAttribute('name') || '';
+        if (_name) {
+          _radioStates = [];
+          const _all = (this.ownerDocument || globalThis.document).querySelectorAll('input');
+          for (let i = 0; i < _all.length; i++) {
+            const r = _all[i];
+            if (((r.getAttribute('type') || '').toLowerCase()) !== 'radio') continue;
+            if ((r.getAttribute('name') || '') !== _name || r.form !== this.form) continue;
+            _radioStates.push([r, !!r.checked]);
+            if (r !== this) r.checked = false;
+          }
+        }
+        this.checked = true;
+      } else {
+        this.checked = !_oldChecked;
+      }
+    }
     const cancelled = !this.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true}));
+    if (cancelled) {
+      if (_radioStates) { for (let i = 0; i < _radioStates.length; i++) _radioStates[i][0].checked = _radioStates[i][1]; }
+      else if (_checkable) this.checked = _oldChecked;
+      return;
+    }
+    if (_checkable && this.checked !== _oldChecked) {
+      try { this.dispatchEvent(new Event('input', {bubbles: true})); } catch (e) {}
+      try { this.dispatchEvent(new Event('change', {bubbles: true})); } catch (e) {}
+      return;
+    }
+    // Label activation behaviour (HTML spec): activating a label runs a
+    // synthetic click on its labeled control. The re-entrancy guard stops a
+    // control nested inside its own label from bouncing the click back.
+    if (_tag === 'LABEL' && !this.__obscuraLabelForwarding) {
+      const control = _labeledControl(this);
+      if (control) {
+        this.__obscuraLabelForwarding = true;
+        try { control.click(); } finally { this.__obscuraLabelForwarding = false; }
+        return;
+      }
+    }
     if (!cancelled) {
       const link = this.tagName === 'A' ? this : (this.closest ? this.closest('a[href]') : null);
       if (link) {
