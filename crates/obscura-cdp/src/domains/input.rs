@@ -189,10 +189,11 @@ pub async fn handle(
                                 try {{ clickTarget.dispatchEvent(globalThis.__obscura_markTrusted(new Event('change', {{bubbles:true}}))); }} catch(e) {{}}\
                                 return;\
                             }}\
-                            if (tag === 'LABEL') {{\
-                                var lblFor = clickTarget.getAttribute('for');\
-                                var ctl = lblFor ? document.getElementById(lblFor) : (clickTarget.querySelector ? clickTarget.querySelector('button,input:not([type=hidden]),meter,output,progress,select,textarea') : null);\
-                                if (ctl && typeof ctl.click === 'function') {{ ctl.click(); return; }}\
+                            var labelHost = tag === 'LABEL' ? clickTarget : (clickTarget.closest ? clickTarget.closest('label') : null);\
+                            if (labelHost && tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA' && tag !== 'BUTTON' && tag !== 'A') {{\
+                                var lblFor = labelHost.getAttribute('for');\
+                                var ctl = lblFor ? document.getElementById(lblFor) : (labelHost.querySelector ? labelHost.querySelector('button,input:not([type=hidden]),meter,output,progress,select,textarea') : null);\
+                                if (ctl && ctl !== clickTarget && typeof ctl.click === 'function') {{ ctl.click(); return; }}\
                             }}\
                             var link = clickTarget.closest ? clickTarget.closest('a[href]') : null;\
                             if (!link && tag === 'A' && clickTarget.getAttribute('href')) link = clickTarget;\
