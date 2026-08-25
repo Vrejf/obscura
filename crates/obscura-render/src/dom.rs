@@ -7088,6 +7088,8 @@ fn layout_dom_once(
         }
     }
 
+    synthesize_flattened_inline_rects(tree, &mut rects, &text_runs, &styles, &mut inline_fragments);
+
     let generated_boxes = ifc_items
         .generated
         .iter()
@@ -7134,6 +7136,76 @@ fn layout_dom_once(
 /// line advance. The fragment uses the selected face's grid-fitted ascent plus
 /// descent, expanded by block-axis padding and border. Those decorations
 /// protrude into the leading and never feed back into the line height.
+/// Flattened inline wrappers (see `is_flattenable_inline`) own no Taffy box,
+/// so layout records no rect for them. Synthesize their geometry as the union
+/// of their rendered descendants' boxes (element rects and per-word text
+/// runs), so `getBoundingClientRect` and hit-testing see the wrapper where
+/// its content actually is. Runs after all other geometry is final.
+fn synthesize_flattened_inline_rects(
+    tree: &DomTree,
+    rects: &mut HashMap<NodeId, Rect>,
+    text_runs: &HashMap<NodeId, Vec<(Rect, String)>>,
+    styles: &HashMap<NodeId, crate::LayoutStyle>,
+    inline_fragments: &mut HashMap<NodeId, Vec<Rect>>,
+) {
+    fn gather(
+        tree: &DomTree,
+        id: NodeId,
+        rects: &HashMap<NodeId, Rect>,
+        text_runs: &HashMap<NodeId, Vec<(Rect, String)>>,
+        pieces: &mut Vec<Rect>,
+    ) {
+        for child in rendered_children(tree, id) {
+            let Some(node) = tree.get_node(child) else {
+                continue;
+            };
+            if matches!(node.data, obscura_dom::tree::NodeData::Text { .. }) {
+                if let Some(runs) = text_runs.get(&child) {
+                    pieces.extend(runs.iter().map(|(rect, _)| *rect));
+                }
+            } else if let Some(rect) = rects.get(&child) {
+                pieces.push(*rect);
+            } else {
+                gather(tree, child, rects, text_runs, pieces);
+            }
+        }
+    }
+    let missing: Vec<NodeId> = styles
+        .iter()
+        .filter(|(id, style)| {
+            // A positioned inline is a containing block for absolute
+            // descendants; installing a synthesized rect would change how
+            // those resolve. Leave its geometry to the existing paths.
+            style.ignores_used_box_sizes()
+                && style.position.is_none()
+                && !rects.contains_key(id)
+        })
+        .map(|(&id, _)| id)
+        .collect();
+    for id in missing {
+        let mut pieces = Vec::new();
+        gather(tree, id, rects, text_runs, &mut pieces);
+        if pieces.is_empty() {
+            continue;
+        }
+        let mut union = pieces[0];
+        for rect in &pieces[1..] {
+            let left = union.x.min(rect.x);
+            let top = union.y.min(rect.y);
+            let right = (union.x + union.width).max(rect.x + rect.width);
+            let bottom = (union.y + union.height).max(rect.y + rect.height);
+            union = Rect {
+                x: left,
+                y: top,
+                width: (right - left).max(0.0),
+                height: (bottom - top).max(0.0),
+            };
+        }
+        rects.insert(id, union);
+        inline_fragments.entry(id).or_insert(pieces);
+    }
+}
+
 fn synthesize_ordinary_inline_fragments(
     rects: &mut HashMap<NodeId, Rect>,
     styles: &HashMap<NodeId, crate::LayoutStyle>,
