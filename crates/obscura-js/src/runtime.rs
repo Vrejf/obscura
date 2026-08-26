@@ -13187,6 +13187,39 @@ mod tests {
     }
 
     #[test]
+    fn test_disabled_fieldset_exemption_is_the_first_legend_child_only() {
+        // Every disabled fieldset ancestor counts, and only descendants of that
+        // fieldset's first <legend> child escape it. A legend wrapped in a div
+        // is not the fieldset's legend, a second legend does not exempt, and an
+        // inner fieldset's legend does not escape an outer disabled fieldset.
+        let mut rt = setup_runtime(
+            r#"<fieldset disabled><legend><input type="checkbox" id="a"></legend>
+                 <input type="checkbox" id="b"></fieldset>
+               <fieldset disabled><legend>x</legend>
+                 <legend><input type="checkbox" id="c"></legend></fieldset>
+               <fieldset disabled><div><legend>
+                 <input type="checkbox" id="d"></legend></div></fieldset>
+               <fieldset disabled><div><fieldset disabled><legend>
+                 <input type="checkbox" id="e"></legend></fieldset></div></fieldset>
+               <fieldset disabled><fieldset><legend>
+                 <input type="checkbox" id="f"></legend></fieldset></fieldset>"#,
+        );
+        let result = rt
+            .evaluate(
+                r#"
+            const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+            for (const id of ids) { document.getElementById(id).click(); }
+            return ids.map(id => document.getElementById(id).checked);
+        "#,
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!([true, false, false, false, false, false])
+        );
+    }
+
+    #[test]
     fn test_click_suppresses_reentrant_dispatch() {
         // The spec's click-in-progress flag: a handler that clicks its own
         // element must not recurse. Sequential clicks are unaffected.

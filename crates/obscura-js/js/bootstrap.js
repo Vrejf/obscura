@@ -2606,16 +2606,30 @@ function _labeledControl(label) {
 const _forwardingLabels = new WeakSet();
 const _clickInProgress = new WeakSet();
 
-// Disabled per the HTML spec: the control's own attribute, or a disabled
-// <fieldset> ancestor. The first <legend> of such a fieldset is exempt.
+// Disabled per the HTML spec: the control's own attribute, or any disabled
+// <fieldset> ancestor. Walking every ancestor rather than the nearest one
+// matters because the exemption is narrow: only the descendants of a disabled
+// fieldset's *first <legend> child* escape, so a control can sit in an inner
+// fieldset's legend and still be disabled by an outer fieldset. Checking the
+// first legend child, not the first legend descendant, keeps a legend wrapped
+// in a div from granting the exemption.
 function _isActuallyDisabled(el) {
   if (!el) return false;
   if (el.disabled || (el.hasAttribute && el.hasAttribute('disabled'))) return true;
-  if (!el.closest) return false;
-  const fieldset = el.closest('fieldset[disabled]');
-  if (!fieldset) return false;
-  const legend = fieldset.querySelector ? fieldset.querySelector('legend') : null;
-  return !(legend && legend.contains && legend.contains(el));
+  let child = el;
+  let parent = el.parentElement;
+  while (parent) {
+    if (parent.tagName === 'FIELDSET' && parent.hasAttribute('disabled')) {
+      let firstLegend = null;
+      for (let c = parent.firstElementChild; c; c = c.nextElementSibling) {
+        if (c.tagName === 'LEGEND') { firstLegend = c; break; }
+      }
+      if (child !== firstLegend) return true;
+    }
+    child = parent;
+    parent = parent.parentElement;
+  }
+  return false;
 }
 
 globalThis.__obscura_activateLabel = function(label, control) {
