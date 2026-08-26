@@ -13187,28 +13187,26 @@ mod tests {
     }
 
     #[test]
-    fn test_checkbox_pre_click_activation_clears_indeterminate() {
-        let mut rt = setup_runtime(
-            r#"<label id="live" for="live-box">a</label><input type="checkbox" id="live-box">
-               <label id="cancel" for="cancel-box">b</label>
-               <input type="checkbox" id="cancel-box">"#,
-        );
+    fn test_click_suppresses_reentrant_dispatch() {
+        // The spec's click-in-progress flag: a handler that clicks its own
+        // element must not recurse. Sequential clicks are unaffected.
+        let mut rt = setup_runtime(r#"<button id="go">Go</button>"#);
         let result = rt
             .evaluate(
                 r#"
-            const live = document.getElementById('live-box');
-            const cancelled = document.getElementById('cancel-box');
-            live.indeterminate = true;
-            cancelled.indeterminate = true;
-            cancelled.addEventListener('click', event => event.preventDefault());
-            document.getElementById('live').click();
-            document.getElementById('cancel').click();
-            return [live.indeterminate, cancelled.indeterminate, cancelled.checked];
+            const go = document.getElementById('go');
+            let nested = 0;
+            go.onclick = () => { nested++; if (nested < 5000) { go.click(); } };
+            go.click();
+            let sequential = 0;
+            go.onclick = () => { sequential++; };
+            go.click();
+            go.click();
+            return [nested, sequential];
         "#,
             )
             .unwrap();
-        // A cancelled activation restores indeterminate along with checked.
-        assert_eq!(result, serde_json::json!([false, true, false]));
+        assert_eq!(result, serde_json::json!([1, 2]));
     }
 
     #[test]

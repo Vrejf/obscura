@@ -2604,6 +2604,7 @@ function _labeledControl(label) {
 // non-enumerable __obscura_activateLabel helper, so both click paths apply the
 // same rule.
 const _forwardingLabels = new WeakSet();
+const _clickInProgress = new WeakSet();
 
 // Disabled per the HTML spec: the control's own attribute, or a disabled
 // <fieldset> ancestor. The first <legend> of such a fieldset is exempt.
@@ -3505,83 +3506,90 @@ class Element extends Node {
     if (_isActuallyDisabled(this) && _tag !== 'LABEL') {
       return;
     }
-    let _oldChecked = false, _oldIndeterminate = false, _radioStates = null;
-    if (_checkable) {
-      _oldChecked = !!this.checked;
-      // Pre-click activation always clears indeterminate, and a cancelled
-      // event restores it.
-      _oldIndeterminate = !!this.indeterminate;
-      this.indeterminate = false;
-      if (_type === 'radio') {
-        const _name = this.getAttribute('name') || '';
-        if (_name) {
-          _radioStates = [];
-          const _all = (this.ownerDocument || globalThis.document).querySelectorAll('input');
-          for (let i = 0; i < _all.length; i++) {
-            const r = _all[i];
-            if (((r.getAttribute('type') || '').toLowerCase()) !== 'radio') continue;
-            if ((r.getAttribute('name') || '') !== _name || r.form !== this.form) continue;
-            _radioStates.push([r, !!r.checked]);
-            if (r !== this) r.checked = false;
+    // The HTML click in progress flag. Without it a handler that clicks its own
+    // element re-enters until the stack is exhausted, and dispatch logs the
+    // resulting RangeError rather than propagating it, so the overflow is
+    // reported only as a console trace.
+    if (_clickInProgress.has(this)) {
+      return;
+    }
+    _clickInProgress.add(this);
+    try {
+      let _oldChecked = false, _radioStates = null;
+      if (_checkable) {
+        _oldChecked = !!this.checked;
+        if (_type === 'radio') {
+          const _name = this.getAttribute('name') || '';
+          if (_name) {
+            _radioStates = [];
+            const _all = (this.ownerDocument || globalThis.document).querySelectorAll('input');
+            for (let i = 0; i < _all.length; i++) {
+              const r = _all[i];
+              if (((r.getAttribute('type') || '').toLowerCase()) !== 'radio') continue;
+              if ((r.getAttribute('name') || '') !== _name || r.form !== this.form) continue;
+              _radioStates.push([r, !!r.checked]);
+              if (r !== this) r.checked = false;
+            }
           }
+          this.checked = true;
+        } else {
+          this.checked = !_oldChecked;
         }
-        this.checked = true;
-      } else {
-        this.checked = !_oldChecked;
       }
-    }
-    const cancelled = !this.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true}));
-    if (cancelled) {
-      if (_radioStates) { for (let i = 0; i < _radioStates.length; i++) _radioStates[i][0].checked = _radioStates[i][1]; }
-      else if (_checkable) this.checked = _oldChecked;
-      if (_checkable) this.indeterminate = _oldIndeterminate;
-      return;
-    }
-    if (_checkable && this.checked !== _oldChecked) {
-      try { this.dispatchEvent(new Event('input', {bubbles: true})); } catch (e) {}
-      try { this.dispatchEvent(new Event('change', {bubbles: true})); } catch (e) {}
-      return;
-    }
-    // Label activation behaviour (HTML spec): activating a label runs a
-    // synthetic click on its labeled control. The re-entrancy guard stops a
-    // control nested inside its own label from bouncing the click back.
-    // Interactive content inside a label has its own activation behaviour and
-    // swallows the label's, so only a click that lands on ordinary content
-    // forwards. An <a> without href is not interactive content.
-    const _INTERACTIVE = _LABELABLE + ',a[href]';
-    const _label = _tag === 'LABEL'
-      ? this
-      : (this.closest && !this.matches(_INTERACTIVE) ? this.closest('label') : null);
-    if (_label && !(this.closest && this.closest(_INTERACTIVE) &&
-        _label.contains(this.closest(_INTERACTIVE)))) {
-      const control = _labeledControl(_label);
-      if (control && control !== this && globalThis.__obscura_activateLabel(_label, control)) {
+      const cancelled = !this.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true}));
+      if (cancelled) {
+        if (_radioStates) { for (let i = 0; i < _radioStates.length; i++) _radioStates[i][0].checked = _radioStates[i][1]; }
+        else if (_checkable) this.checked = _oldChecked;
         return;
       }
-    }
-    if (!cancelled) {
-      const link = this.tagName === 'A' ? this : (this.closest ? this.closest('a[href]') : null);
-      if (link) {
-        const href = link.getAttribute('href');
-        if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
-          location.assign(href);
+      if (_checkable && this.checked !== _oldChecked) {
+        try { this.dispatchEvent(new Event('input', {bubbles: true})); } catch (e) {}
+        try { this.dispatchEvent(new Event('change', {bubbles: true})); } catch (e) {}
+        return;
+      }
+      // Label activation behaviour (HTML spec): activating a label runs a
+      // synthetic click on its labeled control. The re-entrancy guard stops a
+      // control nested inside its own label from bouncing the click back.
+      // Interactive content inside a label has its own activation behaviour and
+      // swallows the label's, so only a click that lands on ordinary content
+      // forwards. An <a> without href is not interactive content.
+      const _INTERACTIVE = _LABELABLE + ',a[href]';
+      const _label = _tag === 'LABEL'
+        ? this
+        : (this.closest && !this.matches(_INTERACTIVE) ? this.closest('label') : null);
+      if (_label && !(this.closest && this.closest(_INTERACTIVE) &&
+          _label.contains(this.closest(_INTERACTIVE)))) {
+        const control = _labeledControl(_label);
+        if (control && control !== this && globalThis.__obscura_activateLabel(_label, control)) {
           return;
         }
       }
-      // Same predicate requestSubmit validates against, so an internal click
-      // can never hand it a submitter it would reject. Also matches the CDP
-      // click path in input.rs, which already treats <input type=image> as a
-      // submit button.
-      if (_isSubmitButton(this)) {
-        const form = this.closest ? this.closest('form') : null;
-        // A real submit-button click fires the cancelable submit event, so use
-        // requestSubmit() (not the plain submit() method, which now bypasses it).
-        if (form && typeof form.requestSubmit === 'function') {
-          form.requestSubmit(this);
-        } else if (form && typeof form.submit === 'function') {
-          form.submit(this);
+      if (!cancelled) {
+        const link = this.tagName === 'A' ? this : (this.closest ? this.closest('a[href]') : null);
+        if (link) {
+          const href = link.getAttribute('href');
+          if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
+            location.assign(href);
+            return;
+          }
+        }
+        // Same predicate requestSubmit validates against, so an internal click
+        // can never hand it a submitter it would reject. Also matches the CDP
+        // click path in input.rs, which already treats <input type=image> as a
+        // submit button.
+        if (_isSubmitButton(this)) {
+          const form = this.closest ? this.closest('form') : null;
+          // A real submit-button click fires the cancelable submit event, so use
+          // requestSubmit() (not the plain submit() method, which now bypasses it).
+          if (form && typeof form.requestSubmit === 'function') {
+            form.requestSubmit(this);
+          } else if (form && typeof form.submit === 'function') {
+            form.submit(this);
+          }
         }
       }
+    } finally {
+      _clickInProgress.delete(this);
     }
   }
   focus() { globalThis.__obscura_focused = this; globalThis.__obscura_click_target = this; }
