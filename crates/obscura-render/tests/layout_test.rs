@@ -4601,3 +4601,26 @@ fn deeply_nested_flattened_inline_wrappers_all_keep_geometry() {
         );
     }
 }
+
+#[test]
+fn an_inline_with_horizontal_margin_keeps_its_box_on_the_mixed_run_path() {
+    // Flattening splices the wrapper's children into the parent and drops the
+    // wrapper's own edges with it, so a margined inline used to lay its
+    // following sibling out 50px too far left (Chrome puts the input at 60).
+    // Margin joins border and padding as a reason not to flatten.
+    let tree = parse_html(
+        r#"<style>html, body { margin:0; font:16px/18px monospace }</style>
+        <div><span id="m" style="margin-left:50px">A</span><input id="after"></div>"#,
+    );
+    let layout = layout_dom(&tree, (400.0, 200.0));
+    let wrapper = layout.rects[&tree.get_element_by_id("m").unwrap()];
+    let after = layout.rects[&tree.get_element_by_id("after").unwrap()];
+    assert!(
+        wrapper.x >= 50.0,
+        "the margin must offset the inline itself, got {wrapper:?}"
+    );
+    assert!(
+        after.x >= wrapper.x + wrapper.width,
+        "the following sibling must start after the margined inline, got {after:?} vs {wrapper:?}"
+    );
+}

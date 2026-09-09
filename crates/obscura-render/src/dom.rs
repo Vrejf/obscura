@@ -9894,6 +9894,7 @@ fn is_flattenable_inline(
         && style.mask_image.is_none()
         && style.border == crate::Edges::default()
         && style.padding == crate::Edges::default()
+        && style.margin == crate::Edges::default()
         && style.position.is_none()
         && !style.overflow_hidden
         && style.float.is_none()
